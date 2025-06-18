@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using FirstGame.UI;
 
 namespace FirstGame;
 
@@ -20,11 +21,16 @@ public class Game1 : Game
     private List<Equipment> _sampleEquipment;
     private Texture2D _menuBg;
 
-    private enum GameState { Menu, Playing, Options }
+    private enum GameState { Menu, CharacterCreation, Playing, Options }
     private GameState _gameState = GameState.Menu;
     private int _menuIndex = 0;
     private readonly string[] _menuItems = { "Start New Game", "Load Game", "Options" };
     private KeyboardState _prevKeyboard;
+
+    private int _charCreateGenderIndex = 0;
+    private string _charCreateName = "";
+    private readonly string[] _genderLabels = { "Male", "Female" };
+    private readonly Color[] _genderColors = { Color.CornflowerBlue, Color.Pink };
 
     public Game1()
     {
@@ -77,7 +83,9 @@ public class Game1 : Game
                 switch (_menuIndex)
                 {
                     case 0: // Start New Game
-                        _gameState = GameState.Playing;
+                        _gameState = GameState.CharacterCreation;
+                        _charCreateGenderIndex = 0;
+                        _charCreateName = "";
                         break;
                     case 1: // Load Game
                         // TODO: Implement load logic
@@ -87,6 +95,42 @@ public class Game1 : Game
                         break;
                 }
             }
+            _prevKeyboard = keyboard;
+            return;
+        }
+        if (_gameState == GameState.CharacterCreation)
+        {
+            // Gender selection
+            if (keyboard.IsKeyDown(Keys.Left) && !_prevKeyboard.IsKeyDown(Keys.Left))
+                _charCreateGenderIndex = (_charCreateGenderIndex + _genderLabels.Length - 1) % _genderLabels.Length;
+            if (keyboard.IsKeyDown(Keys.Right) && !_prevKeyboard.IsKeyDown(Keys.Right))
+                _charCreateGenderIndex = (_charCreateGenderIndex + 1) % _genderLabels.Length;
+            // Name input
+            foreach (var key in keyboard.GetPressedKeys())
+            {
+                if (!_prevKeyboard.IsKeyDown(key))
+                {
+                    if (key == Keys.Back && _charCreateName.Length > 0)
+                        _charCreateName = _charCreateName.Substring(0, _charCreateName.Length - 1);
+                    else if (key == Keys.Space)
+                        _charCreateName += " ";
+                    else if (key == Keys.Enter && _charCreateName.Length > 0)
+                    {
+                        // Confirm and start game
+                        _player = new Player(_charCreateName, _charCreateGenderIndex == 0 ? Gender.Male : Gender.Female);
+                        _skills = GenerateRandomSkills(20);
+                        _gameState = GameState.Playing;
+                    }
+                    else if (_charCreateName.Length < 12 && key >= Keys.A && key <= Keys.Z)
+                    {
+                        bool shift = keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift);
+                        char c = (char)(key - Keys.A + (shift ? 'A' : 'a'));
+                        _charCreateName += c;
+                    }
+                }
+            }
+            if (keyboard.IsKeyDown(Keys.Escape) && !_prevKeyboard.IsKeyDown(Keys.Escape))
+                _gameState = GameState.Menu;
             _prevKeyboard = keyboard;
             return;
         }
@@ -226,6 +270,47 @@ public class Game1 : Game
                     _spriteBatch.DrawString(_font, item, pos, Color.White);
                 }
             }
+            _spriteBatch.End();
+            return;
+        }
+        if (_gameState == GameState.CharacterCreation)
+        {
+            int panelWidth = 600;
+            int panelHeight = 350;
+            int panelX = (GraphicsDevice.Viewport.Width - panelWidth) / 2;
+            int panelY = (GraphicsDevice.Viewport.Height - panelHeight) / 2;
+            _spriteBatch.Draw(_menuBg, new Rectangle(panelX, panelY, panelWidth, panelHeight), Color.White);
+            string title = "Create Your Character";
+            Vector2 titleSize = _font.MeasureString(title);
+            Vector2 titlePos = new Vector2((GraphicsDevice.Viewport.Width - titleSize.X) / 2, panelY + 30);
+            _spriteBatch.DrawString(_font, title, titlePos + new Vector2(2,2), Color.Black);
+            _spriteBatch.DrawString(_font, title, titlePos, Color.Cyan);
+            // Gender selection
+            string genderLabel = "Choose Gender:";
+            Vector2 genderLabelSize = _font.MeasureString(genderLabel);
+            Vector2 genderLabelPos = new Vector2((GraphicsDevice.Viewport.Width - genderLabelSize.X) / 2, panelY + 100);
+            _spriteBatch.DrawString(_font, genderLabel, genderLabelPos, Color.White);
+            int iconY = (int)genderLabelPos.Y + 50;
+            int iconSpacing = 180;
+            for (int i = 0; i < _genderLabels.Length; i++)
+            {
+                int iconX = (GraphicsDevice.Viewport.Width / 2) - iconSpacing / 2 + i * iconSpacing;
+                Color color = _genderColors[i];
+                int size = (i == _charCreateGenderIndex) ? 96 : 72;
+                SpriteBatchHelper.DrawStickFigure(GraphicsDevice, _spriteBatch, iconX, iconY, size, color, i == 1);
+                string label = _genderLabels[i];
+                Vector2 labelSize = _font.MeasureString(label);
+                _spriteBatch.DrawString(_font, label, new Vector2(iconX - labelSize.X / 2, iconY + size / 2 + 10), i == _charCreateGenderIndex ? Color.Yellow : Color.White);
+            }
+            // Name input
+            string nameLabel = "Enter Name:";
+            Vector2 nameLabelSize = _font.MeasureString(nameLabel);
+            Vector2 nameLabelPos = new Vector2((GraphicsDevice.Viewport.Width - nameLabelSize.X) / 2, iconY + 100);
+            _spriteBatch.DrawString(_font, nameLabel, nameLabelPos, Color.White);
+            string nameInput = _charCreateName + (DateTime.Now.Millisecond % 1000 < 500 ? "_" : "");
+            Vector2 nameInputSize = _font.MeasureString(nameInput);
+            Vector2 nameInputPos = new Vector2((GraphicsDevice.Viewport.Width - nameInputSize.X) / 2, nameLabelPos.Y + 40);
+            _spriteBatch.DrawString(_font, nameInput, nameInputPos, Color.Yellow);
             _spriteBatch.End();
             return;
         }
