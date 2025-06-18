@@ -1,0 +1,53 @@
+# MonoGame and .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.db
+*.log
+*.xnb
+*.exe
+*.dll
+*.pdb
+*.cache
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.ipch
+*.aps
+*.ncb
+*.sbr
+*.scc
+*.vssscc
+*.vsscc
+*.tmp
+*.bak
+*.swp
+*.DS_Store
+Thumbs.db
+*.userprefs
+*.userosscache
+*.sln.docstates
+# Rider
+.idea/
+*.sln.iml
+# JetBrains Rider
+.idea/
+*.sln.iml
+# MonoDevelop
+*.pidb
+*.userprefs
+# Mac
+.DS_Store
+# Windows
+Thumbs.db
+# Build results
+*.Build.cs
+*.Build.cs.*
+# Content pipeline output
+Content/bin/
+Content/obj/
+# Test results
+TestResults/
