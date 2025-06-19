@@ -4,6 +4,8 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using FirstGame.UI;
+using FirstGame.Entities;
+using FirstGame.Core;
 
 namespace FirstGame;
 
@@ -20,6 +22,14 @@ public class Game1 : Game
     private int _lastSkillDamage;
     private List<Equipment> _sampleEquipment;
     private Texture2D _menuBg;
+    private Map _map;
+    private PlayerEntity _playerEntity;
+    private Texture2D _tileTex;
+    private Texture2D _playerTex;
+    private Vector2 _camera;
+
+    // Add these fields for line and hexagon texture caching
+    private Texture2D _uiLineTex;
 
     private enum GameState { Menu, CharacterCreation, Playing, Options }
     private GameState _gameState = GameState.Menu;
@@ -32,9 +42,17 @@ public class Game1 : Game
     private readonly string[] _genderLabels = { "Male", "Female" };
     private readonly Color[] _genderColors = { Color.CornflowerBlue, Color.Pink };
 
+    private bool _showStatPanel = false;
+    private MouseState _prevMouse;
+    private int[] _pendingStatAlloc = new int[6]; // STR, VIT, AGI, INT, DEX, LUK
+    private readonly string[] _statNames = { "STR", "VIT", "AGI", "INT", "DEX", "LUK" };
+
     public Game1()
     {
         _graphics = new GraphicsDeviceManager(this);
+        _graphics.PreferredBackBufferWidth = 1024;
+        _graphics.PreferredBackBufferHeight = 768;
+        _graphics.ApplyChanges();
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
     }
@@ -66,14 +84,47 @@ public class Game1 : Game
             new Equipment("Lucky Ring", EquipmentType.AccessoryLeft, luk: 8),
             new Equipment("Magic Amulet", EquipmentType.AccessoryRight, @int: 6)
         ];
+        // Create a simple map (1 = ground, 0 = empty)
+        int[,] tiles = new int[12, 32];
+        for (int x = 0; x < 32; x++)
+        {
+            tiles[11, x] = 1; // ground
+            if (x % 5 == 0 && x > 0 && x < 30) tiles[8, x] = 1; // platforms
+        }
+        _map = new Map(tiles);
+        _playerEntity = new PlayerEntity { Position = new Vector2(100, 100), Gender = _playerGender };
+        // Simple textures
+        _tileTex = new Texture2D(GraphicsDevice, 1, 1);
+        _tileTex.SetData(new[] { Color.Gray });
+        _playerTex = new Texture2D(GraphicsDevice, 1, 1);
+        _playerTex.SetData(new[] { Color.White });
     }
 
     protected override void Update(GameTime gameTime)
     {
         var keyboard = Keyboard.GetState();
+        float delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        // Only handle S for stat panel in Playing state
+        if (_gameState == GameState.Playing)
+        {
+            if ((keyboard.IsKeyDown(Keys.S) && !_prevKeyboard.IsKeyDown(Keys.S)) ||
+                (Mouse.GetState().LeftButton == ButtonState.Pressed && !_prevMouse.LeftButton.HasFlag(ButtonState.Pressed)))
+            {
+                // Check if mouse is over icon
+                var mouse = Mouse.GetState();
+                int iconSize = 64;
+                Rectangle iconRect = new Rectangle(30, 30, iconSize, iconSize);
+                if (iconRect.Contains(mouse.Position) || (keyboard.IsKeyDown(Keys.S) && !_prevKeyboard.IsKeyDown(Keys.S)))
+                {
+                    _showStatPanel = !_showStatPanel;
+                    if (_showStatPanel)
+                        Array.Clear(_pendingStatAlloc, 0, _pendingStatAlloc.Length); // Reset pending on open
+                }
+            }
+        }
+        // Menu navigation and Enter key only in Menu/CharacterCreation
         if (_gameState == GameState.Menu)
         {
-            // Menu navigation
             if (keyboard.IsKeyDown(Keys.Down) && !_prevKeyboard.IsKeyDown(Keys.Down))
                 _menuIndex = (_menuIndex + 1) % _menuItems.Length;
             if (keyboard.IsKeyDown(Keys.Up) && !_prevKeyboard.IsKeyDown(Keys.Up))
@@ -119,6 +170,7 @@ public class Game1 : Game
                         // Confirm and start game
                         _player = new Player(_charCreateName, _charCreateGenderIndex == 0 ? Gender.Male : Gender.Female);
                         _skills = GenerateRandomSkills(20);
+                        _playerEntity = new PlayerEntity { Position = new Vector2(100, 100), Gender = _charCreateGenderIndex == 0 ? Gender.Male : Gender.Female };
                         _gameState = GameState.Playing;
                     }
                     else if (_charCreateName.Length < 12 && key >= Keys.A && key <= Keys.Z)
@@ -172,8 +224,15 @@ public class Game1 : Game
             _player.AllocateStat("LUK");
         }
 
-        float delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
-        // Update cooldown timers
+        if (_gameState == GameState.Playing)
+        {
+            _playerEntity.Update(_map, delta);
+            // Camera follows player
+            _camera = _playerEntity.Position - new Vector2(GraphicsDevice.Viewport.Width / 2, GraphicsDevice.Viewport.Height / 2);
+            _camera.X = MathHelper.Clamp(_camera.X, 0, _map.Width * _map.TileSize - GraphicsDevice.Viewport.Width);
+            _camera.Y = MathHelper.Clamp(_camera.Y, 0, _map.Height * _map.TileSize - GraphicsDevice.Viewport.Height);
+        }
+        // Update cooldown timers (always, not just in Playing)
         foreach (var skill in _skills)
         {
             if (skill.CooldownTimer > 0)
@@ -211,6 +270,45 @@ public class Game1 : Game
         if (Keyboard.GetState().IsKeyDown(Keys.M)) _player.Unequip(EquipmentType.AccessoryLeft);
         if (Keyboard.GetState().IsKeyDown(Keys.N)) _player.Unequip(EquipmentType.AccessoryRight);
 
+        // Stat allocation panel input (keyboard only for now)
+        if (_showStatPanel && _gameState == GameState.Playing)
+        {
+            // 1-6 to select stat, +/- to add/remove, Enter to confirm
+            for (int i = 0; i < 6; i++)
+            {
+                Keys plusKey = Keys.NumPad1 + i; // NumPad1-6
+                Keys minusKey = Keys.D1 + i;     // D1-D6
+                // Add point (NumPad1-6)
+                if (keyboard.IsKeyDown(plusKey) && !_prevKeyboard.IsKeyDown(plusKey))
+                {
+                    if (_player.StatPoints > 0)
+                    {
+                        _pendingStatAlloc[i]++;
+                    }
+                }
+                // Remove point (D1-D6)
+                if (keyboard.IsKeyDown(minusKey) && !_prevKeyboard.IsKeyDown(minusKey))
+                {
+                    if (_pendingStatAlloc[i] > 0)
+                    {
+                        _pendingStatAlloc[i]--;
+                    }
+                }
+            }
+            // Confirm allocation (Enter)
+            if (keyboard.IsKeyDown(Keys.Enter) && !_prevKeyboard.IsKeyDown(Keys.Enter))
+            {
+                for (int i = 0; i < 6; i++)
+                {
+                    if (_pendingStatAlloc[i] > 0)
+                    {
+                        _player.AllocateStat(_statNames[i], _pendingStatAlloc[i]);
+                    }
+                }
+                Array.Clear(_pendingStatAlloc, 0, _pendingStatAlloc.Length);
+            }
+        }
+
         _prevKeyboard = keyboard;
         base.Update(gameTime);
     }
@@ -241,35 +339,11 @@ public class Game1 : Game
         _spriteBatch.Begin();
         if (_gameState == GameState.Menu)
         {
-            // Draw semi-transparent background panel
             int panelWidth = 500;
             int panelHeight = 300;
             int panelX = (GraphicsDevice.Viewport.Width - panelWidth) / 2;
             int panelY = (GraphicsDevice.Viewport.Height - panelHeight) / 2;
-            _spriteBatch.Draw(_menuBg, new Rectangle(panelX, panelY, panelWidth, panelHeight), Color.White);
-            // Draw title
-            string title = "FIRST PLATFORMER";
-            Vector2 titleSize = _font.MeasureString(title);
-            Vector2 titlePos = new Vector2((GraphicsDevice.Viewport.Width - titleSize.X) / 2, panelY + 30);
-            _spriteBatch.DrawString(_font, title, titlePos + new Vector2(2,2), Color.Black);
-            _spriteBatch.DrawString(_font, title, titlePos, Color.Cyan);
-            // Draw menu items centered
-            for (int i = 0; i < _menuItems.Length; i++)
-            {
-                string item = _menuItems[i];
-                Vector2 size = _font.MeasureString(item);
-                Vector2 pos = new Vector2((GraphicsDevice.Viewport.Width - size.X) / 2, panelY + 100 + i * 50);
-                if (i == _menuIndex)
-                {
-                    // Draw highlight (shadow + color + scale)
-                    _spriteBatch.DrawString(_font, item, pos + new Vector2(2,2), Color.Black, 0, Vector2.Zero, 1.2f, SpriteEffects.None, 0);
-                    _spriteBatch.DrawString(_font, item, pos, Color.Yellow, 0, Vector2.Zero, 1.2f, SpriteEffects.None, 0);
-                }
-                else
-                {
-                    _spriteBatch.DrawString(_font, item, pos, Color.White);
-                }
-            }
+            SpriteBatchHelper.DrawMenuPanel(_spriteBatch, _font, _menuBg, panelWidth, panelHeight, panelX, panelY, _menuItems, _menuIndex);
             _spriteBatch.End();
             return;
         }
@@ -279,71 +353,39 @@ public class Game1 : Game
             int panelHeight = 350;
             int panelX = (GraphicsDevice.Viewport.Width - panelWidth) / 2;
             int panelY = (GraphicsDevice.Viewport.Height - panelHeight) / 2;
-            _spriteBatch.Draw(_menuBg, new Rectangle(panelX, panelY, panelWidth, panelHeight), Color.White);
-            string title = "Create Your Character";
-            Vector2 titleSize = _font.MeasureString(title);
-            Vector2 titlePos = new Vector2((GraphicsDevice.Viewport.Width - titleSize.X) / 2, panelY + 30);
-            _spriteBatch.DrawString(_font, title, titlePos + new Vector2(2,2), Color.Black);
-            _spriteBatch.DrawString(_font, title, titlePos, Color.Cyan);
-            // Gender selection
-            string genderLabel = "Choose Gender:";
-            Vector2 genderLabelSize = _font.MeasureString(genderLabel);
-            Vector2 genderLabelPos = new Vector2((GraphicsDevice.Viewport.Width - genderLabelSize.X) / 2, panelY + 100);
-            _spriteBatch.DrawString(_font, genderLabel, genderLabelPos, Color.White);
-            int iconY = (int)genderLabelPos.Y + 50;
-            int iconSpacing = 180;
-            for (int i = 0; i < _genderLabels.Length; i++)
-            {
-                int iconX = (GraphicsDevice.Viewport.Width / 2) - iconSpacing / 2 + i * iconSpacing;
-                Color color = _genderColors[i];
-                int size = (i == _charCreateGenderIndex) ? 96 : 72;
-                SpriteBatchHelper.DrawStickFigure(GraphicsDevice, _spriteBatch, iconX, iconY, size, color, i == 1);
-                string label = _genderLabels[i];
-                Vector2 labelSize = _font.MeasureString(label);
-                _spriteBatch.DrawString(_font, label, new Vector2(iconX - labelSize.X / 2, iconY + size / 2 + 10), i == _charCreateGenderIndex ? Color.Yellow : Color.White);
-            }
-            // Name input
-            string nameLabel = "Enter Name:";
-            Vector2 nameLabelSize = _font.MeasureString(nameLabel);
-            Vector2 nameLabelPos = new Vector2((GraphicsDevice.Viewport.Width - nameLabelSize.X) / 2, iconY + 100);
-            _spriteBatch.DrawString(_font, nameLabel, nameLabelPos, Color.White);
-            string nameInput = _charCreateName + (DateTime.Now.Millisecond % 1000 < 500 ? "_" : "");
-            Vector2 nameInputSize = _font.MeasureString(nameInput);
-            Vector2 nameInputPos = new Vector2((GraphicsDevice.Viewport.Width - nameInputSize.X) / 2, nameLabelPos.Y + 40);
-            _spriteBatch.DrawString(_font, nameInput, nameInputPos, Color.Yellow);
+            SpriteBatchHelper.DrawCharacterCreationPanel(_spriteBatch, _font, _menuBg, panelWidth, panelHeight, panelX, panelY, _genderLabels, _genderColors, _charCreateGenderIndex, _charCreateName, GraphicsDevice);
             _spriteBatch.End();
             return;
         }
         if (_gameState == GameState.Options)
         {
-            _spriteBatch.DrawString(_font, "Options (Press ESC to return)", new Vector2(100, 100), Color.Yellow);
+            SpriteBatchHelper.DrawOptionsPanel(_spriteBatch, _font);
             _spriteBatch.End();
             return;
         }
         if (_player != null && _font != null)
         {
-            string stats = $"Name: {_player.Name}\nGender: {_player.Gender}\nLevel: {_player.Level}\nXP: {_player.Experience}/{_player.ExperienceToNextLevel}\nStat Points: {_player.StatPoints}\nSTR: {_player.STR}  VIT: {_player.VIT}  AGI: {_player.AGI}  INT: {_player.INT}  LUK: {_player.LUK}";
-            _spriteBatch.DrawString(_font, stats, new Vector2(20, 20), Color.White);
-            // Show unlocked skills
-            var unlocked = _skills.FindAll(s => _player.Level >= s.UnlockLevel);
-            string skillText = "Unlocked Skills:";
-            foreach (var skill in unlocked)
-            {
-                string cd = skill.CooldownTimer > 0 ? $" (CD: {skill.CooldownTimer:F1}s)" : "";
-                skillText += $"\n{skill.Name} (Lv{skill.UnlockLevel}) Pow:{skill.BasePower} Mult:{skill.SkillMultiplier} INTx:{skill.IntMultiplier} CD:{skill.Cooldown}s{cd}";
-            }
-            _spriteBatch.DrawString(_font, skillText, new Vector2(20, 180), Color.Yellow);
-            // Show equipped items and total stats
-            string equipText = $"\nEquipped:\nWeapon: {_player.Weapon?.Name ?? "-"}\nHead: {_player.Head?.Name ?? "-"}\nBody: {_player.Body?.Name ?? "-"}\nArm: {_player.Arm?.Name ?? "-"}\nFeet: {_player.Feet?.Name ?? "-"}\nAccL: {_player.AccessoryLeft?.Name ?? "-"}\nAccR: {_player.AccessoryRight?.Name ?? "-"}";
-            equipText += $"\nTotal STR: {_player.TotalSTR}  VIT: {_player.TotalVIT}  AGI: {_player.TotalAGI}  INT: {_player.TotalINT}  LUK: {_player.TotalLUK}";
-            _spriteBatch.DrawString(_font, equipText, new Vector2(400, 20), Color.LightGreen);
+            // Removed stats, skills, and name display for a cleaner UI
         }
         if (_lastUsedSkill != null)
         {
             string used = $"Last Skill: {_lastUsedSkill.Name} | Damage: {_lastSkillDamage}";
             _spriteBatch.DrawString(_font, used, new Vector2(20, 500), Color.Orange);
         }
+        if (_gameState == GameState.Playing)
+        {
+            if (_showStatPanel)
+            {
+                // Only show the stat panel, not the game scene, when stat panel is open
+                SpriteBatchHelper.DrawStatPanel(_spriteBatch, _font, _menuBg, _player, _graphics.PreferredBackBufferWidth, _graphics.PreferredBackBufferHeight, GraphicsDevice, ref _uiLineTex, _pendingStatAlloc);
+            }
+            else
+            {
+                SpriteBatchHelper.DrawPlayerHUD(_spriteBatch, _font, _player, _tileTex, GraphicsDevice);
+                _map.Draw(_spriteBatch, _tileTex, _camera);
+                _playerEntity.Draw(_spriteBatch, _playerTex, _camera);
+            }
+        }
         _spriteBatch.End();
-        base.Draw(gameTime);
     }
 }
